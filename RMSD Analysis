@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Minimal: Mean RMSD vs Temperature with error bars (Mean ± SD), opens in xmgrace.
+# List format: <traj.nc> <dt_ns>   (T is read from filename like ..._310K_...nc)
+
+set -euo pipefail
+
+TOP="${TOP:-/nfs/mathusalem/maxence/sfinke/Mutand/forcedbond/3FIQforced.prmtop}"
+LIST="${LIST:-/nfs/mathusalem/maxence/sfinke/Skripts/TripRMSD/traj_list_temp.txt}"
+
+reps="rmsd_vs_temp_reps.dat"
+grouped="rmsd_vs_temp_grouped.dat"
+> "$reps"
+
+n=0
+while IFS= read -r line; do
+  [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+  traj=$(awk '{print $1}' <<<"$line")
+  dt=$(awk '{print $2}' <<<"$line")
+
+  [[ -z "${traj:-}" || -z "${dt:-}" ]] && continue
+  [[ ! -s "$traj" ]] && { echo "[skip] $traj" >&2; continue; }
+
+  # --- auto-detect T from filename, e.g., prod_310K_10ns.nc ---
+  fname=$(basename "$traj")
+  if [[ "$fname" =~ _([0-9]+)K(_|\.nc$) ]]; then
+    T="${BASH_REMATCH[1]}"
+  else
+    echo "[error] Could not parse temperature from: $fname (expect *_###K_*.nc)" >&2
+    continue
+  fi
+
+  n=$((n+1)); tag=$(printf "%02d" "$n")
+
+  # cpptraj: align to first frame and compute CA RMSD (Å)
+  cat > "_rmsd_${tag}.in" <<EOF
+parm ${TOP}
+trajin ${traj}
+autoimage
+rms first @CA out rmsd_series_${tag}.dat
+run
+EOF
+  cpptraj -i "_rmsd_${tag}.in" >/dev/null
+
+  # rmsd_series has two columns: Frame_index  RMSD(Å). Skip comments.
+  # Also write a time column if you ever want to plot traces later.
+  awk -v dt="$dt" '
+    $0 ~ /^#/ {next}
+    {t=(NR-1)*dt; print t, $2}
+  ' rmsd_series_${tag}.dat > rmsd_time_${tag}.dat
+
+  # Mean RMSD across frames for this replicate
+  mean=$(awk '{S+=$2;N++} END{if(N) printf "%.6f", S/N; else print "nan"}' rmsd_time_${tag}.dat)
+  printf "%s\t%s\n" "$T" "$mean" >> "$reps"
+done < "$LIST"
+
+# Group replicates by temperature → Mean ± SD
+awk '
+{ t=$1; y=$2; c[t]++; s[t]+=y; q[t]+=y*y }
+END{
+  for(t in c){
+    n=c[t]; m=s[t]/n
+    v=(n>1)?(q[t]-s[t]*s[t]/n)/(n-1):0
+    sd=(v>0)?sqrt(v):0
+    printf "%s\t%.6f\t%.6f\n", t, m, sd
+  }
+}' "$reps" | sort -n > "$grouped"
+
+# Plot in xmgrace with error bars
+xmgrace -block "$grouped" -settype xydy -bxy 1:2:3 \
+  -pexec 'with g0; legend off' \
+  -pexec 'with g0; xaxis label "Temperature (K)"' \
+  -pexec 'with g0; yaxis label "Mean RMSD (Å)"' &
