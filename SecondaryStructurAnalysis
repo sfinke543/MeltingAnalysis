@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# ss_alpha_beta_vs_temp_err.sh
+# Minimal: DSSP per traj -> Alpha/Beta % -> mean±SD per temperature -> xmgrace with error bars
+set -euo pipefail
+
+# --- EDIT THESE 3 LINES (same as before) ---
+TOP="/nfs/mathusalem/maxence/sfinke/Mutand/forcedbond/3FIQforced.prmtop"
+RANGE="1-157"   # e.g. 1-157
+HNAME="H"       # H or HN
+# -------------------------------------------
+LIST="/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Triplikate_Traj.txt"
+
+: > alpha_vs_temp_reps.dat    # T  alpha%
+: > beta_vs_temp_reps.dat     # T  beta%
+
+while read -r traj T _; do
+  [[ -z "${traj:-}" || -z "${T:-}" ]] && continue
+  [[ "$traj" =~ ^# ]] && continue
+  [[ ! -s "$traj" ]] && { echo "[skip] $traj"; continue; }
+
+  out="_dssp_${T}K.$(basename "$traj").dat"
+
+  cat > _ss.in <<EOF
+parm ${TOP}
+autoimage
+strip :WAT,Na+,Cl-
+trajin ${traj}
+secstruct :${RANGE} nameh ${HNAME} totalout ${out}
+run
+EOF
+  cpptraj -i _ss.in >/dev/null
+  rm -f _ss.in
+
+  # Average columns "...Alpha]" and "...Extended]" (common cpptraj DSSP names)
+  awk -v T="$T" '
+    NR==1{
+      for(i=1;i<=NF;i++){
+        if($i~/Alpha]$/)    A=i
+        if($i~/Extended]$/) B=i
+      }
+      next
+    }
+    { n++; if(A) sa+=$A; if(B) sb+=$B }
+    END{
+      if(n>0 && A) printf "%d %.6f\n", T, (sa/n)*100
+      if(n>0 && B) printf "%d %.6f\n", T, (sb/n)*100 > "__tmpB"
+    }
+  ' "$out" >> alpha_vs_temp_reps.dat
+  [[ -s __tmpB ]] && cat __tmpB >> beta_vs_temp_reps.dat
+  rm -f __tmpB
+done < "$LIST"
+
+# ---- Aggregate replicates: mean ± SD per temperature ----
+# sample SD: sqrt( (sum2 - sum^2/n) / (n-1) ), SD=0 if n<2
+
+awk '
+  {t=$1; y=$2; n[t]++; s[t]+=y; s2[t]+=y*y}
+  END{
+    print "#T(K) MeanAlpha(%) SD n"
+    for(t in n){
+      m = s[t]/n[t]
+      sd = (n[t]>1)? sqrt( (s2[t] - s[t]*s[t]/n[t])/(n[t]-1) ) : 0
+      printf "%d %.6f %.6f %d\n", t, m, sd, n[t]
+    }
+  }
+' alpha_vs_temp_reps.dat | sort -n > alpha_vs_temp_mean_sd.dat
+
+awk '
+  {t=$1; y=$2; n[t]++; s[t]+=y; s2[t]+=y*y}
+  END{
+    print "#T(K) MeanBeta(%) SD n"
+    for(t in n){
+      m = s[t]/n[t]
+      sd = (n[t]>1)? sqrt( (s2[t] - s[t]*s[t]/n[t])/(n[t]-1) ) : 0
+      printf "%d %.6f %.6f %d\n", t, m, sd, n[t]
+    }
+  }
+' beta_vs_temp_reps.dat | sort -n > beta_vs_temp_mean_sd.dat
+
+# Also keep the mean-only files (for compatibility)
+awk 'NR==1{print "#T(K) Alpha (%)"; next} {print $1, $2}' alpha_vs_temp_mean_sd.dat > alpha_vs_temp_pct.dat
+awk 'NR==1{print "#T(K) Beta  (%)";  next} {print $1, $2}' beta_vs_temp_mean_sd.dat  > beta_vs_temp_pct.dat
+
+echo "[done] Wrote:"
+echo "  alpha_vs_temp_reps.dat, beta_vs_temp_reps.dat   (per-traj)"
+echo "  alpha_vs_temp_mean_sd.dat, beta_vs_temp_mean_sd.dat (mean ± SD, n)"
+echo "  alpha_vs_temp_pct.dat,  beta_vs_temp_pct.dat    (mean only)"
+
+# ---- Plot mean ± SD with error bars in xmgrace ----
+if command -v xmgrace >/dev/null; then
+  xmgrace \
+    -block alpha_vs_temp_mean_sd.dat -settype xydy -bxy 1:2:3 \
+    -block beta_vs_temp_mean_sd.dat  -settype xydy -bxy 1:2:3 \
+    -pexec 'WITH G0; WORLD YMIN 0; WORLD YMAX 100' \
+    -pexec 'XAXIS LABEL "Temperature (K)"; YAXIS LABEL "Secondary structure (%)"' \
+    -pexec 's0 legend "Alpha (mean ± SD)"; s1 legend "Beta (mean ± SD)"' \
+    -pexec 'LEGEND 0.85, 0.85' \
+    -pexec 's0 line linewidth 2; s1 line linewidth 2' \
+    -pexec "s0 symbol 1; s0 symbol size 0.8; s1 symbol 2; s1 symbol size 0.8" \
+    -pexec "s0 errorbar linewidth 1.0; s1 errorbar linewidth 1.0" &
+  echo "[plot] Opened xmgrace with error bars."
+else
+  echo "[plot] xmgrace not found; skipping plot."
+fi
