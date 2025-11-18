@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# Compute mean Gyration Diameter (Dg = 2*Rg) per trajectory and plot Mean(Dg) vs Temperature,
+# aggregating replicates at the same temperature and plotting error bars (SEM by default).
+#
+# LIST format (space-separated), one line per trajectory (replicates = repeat lines with same temp in filename):
+#   <traj.nc> <dt_ns>
+#
+# Example lines:
+#   /.../autoheat1/cycle01/prod_310K_10ns.nc  0.02
+#   /.../autoheat2/cycle01/prod_310K_10ns.nc  0.02
+#   /.../autoheat3/cycle01/prod_310K_10ns.nc  0.02
+#
+# Optional env:
+#   TOP=</path/to/your.prmtop>       (default below)
+#   LIST=<listfile>                  (default traj_list_gyration.txt)
+#   HARDCOPY=true|false              (false opens xmgrace window; true saves PNG)
+#   OUTPNG=<filename>                (default gyration_vs_temp.png)
+#   OUTDIR=<dir>                     (default .  -> current folder)
+#   MASK=<selection>                 (atoms used for Rg; default protein only)
+#   ERRTYPE=sem|sd                   (error bars = standard error of mean or std dev; default sem)
+#
+# Requires: cpptraj, awk, xmgrace
+
+set -euo pipefail
+
+TOP="${TOP:-/nfs/mathusalem/maxence/sfinke/Mutand/forcedbond/3FIQforced.prmtop}"
+LIST="${LIST:-/nfs/mathusalem/maxence/sfinke/Skripts/TripGD/traj_list_temp.txt}"
+HARDCOPY=${HARDCOPY:-false}
+OUTPNG="${OUTPNG:-gyration_vs_temp.png}"
+OUTDIR="${OUTDIR:-.}"           # <-- outputs in current folder by default
+MASK="${MASK:-:10-157}"         # adjust if needed (e.g., ":1-157" for your protein)
+ERRTYPE="${ERRTYPE:-sem}"       # sem or sd
+
+mkdir -p "$OUTDIR"
+cd "$OUTDIR"
+
+# --- helpers ---
+make_rg_series () {
+  local top=$1 traj=$2 tag=$3
+  cat > "_rg_${tag}.in" <<EOF
+parm ${top}
+trajin ${traj}
+autoimage
+strip :WAT,Na+,Cl-
+# Radius of gyration (Å), mass-weighted, for selection
+radgyr ${MASK} mass out rg_series_${tag}.dat
+run
+EOF
+  cpptraj -i "_rg_${tag}.in" >/dev/null
+}
+
+# Convert cpptraj 'radgyr' output into time(ns) vs DIAMETER(Å)
+diam_from_rg () {
+  local infile=$1 dt=$2 outfile=$3
+  awk -v dt="$dt" '
+    BEGIN{OFS="\t"}
+    NR==1{if($0 ~ /[Rr]g/){next}}  # skip header if present
+    /^[[:space:]]*$/ {next}
+    {
+      rg=$NF
+      t=(NR-2)*dt
+      print t, 2.0*rg
+    }
+  ' "$infile" > "$outfile"
+}
+
+# Mean of the second column
+mean_of_col2 () {
+  local infile=$1
+  awk '{ s+=$2; n++ } END{ if(n>0) printf "%.6f\n", s/n; else print "nan" }' "$infile"
+}
+
+# --- main ---
+if [[ ! -s "$LIST" ]]; then
+  echo "Missing $LIST. Create it with lines: <traj.nc> <dt_ns>" >&2
+  exit 1
+fi
+
+tmp_dat="gyration_vs_temp_raw.dat"   # Temp  MeanDg  Label
+: > "$tmp_dat"
+
+n=0
+while IFS= read -r line; do
+  # skip blanks/comments
+  [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+  traj=$(awk '{print $1}' <<<"$line")
+  dt=$(awk '{print $2}' <<<"$line")
+
+  if [[ -z "${traj:-}" || -z "${dt:-}" ]]; then
+    echo "[skip] Expected 2 columns: <traj.nc> <dt_ns>  ::  got: $line" >&2
+    continue
+  fi
+  if [[ ! -s "$traj" ]]; then
+    echo "[skip] Missing: $traj" >&2
+    continue
+  fi
+
+  # extract temperature from filename/path, e.g. ".../prod_310K_10ns.nc" -> 310
+  tempK=""
+  if [[ "$traj" =~ ([0-9]+)[Kk] ]]; then
+    tempK="${BASH_REMATCH[1]}"
+  fi
+  if [[ -z "$tempK" ]]; then
+    echo "[skip] Could not parse temperature like '*_###K*' from: $traj" >&2
+    continue
+  fi
+
+  n=$((n+1))
+  tag=$(printf "%02d" "$n")
+  label="$(basename "$traj")"
+
+  echo "[run] T=${tempK}K  -> $label"
+  make_rg_series "$TOP" "$traj" "$tag"
+  diam_from_rg "rg_series_${tag}.dat" "$dt" "dg_${tag}.dat"
+  meanDg=$(mean_of_col2 "dg_${tag}.dat")
+
+  printf "%s\t%s\t%s\n" "$tempK" "$meanDg" "$label" >> "$tmp_dat"
+done < "$LIST"
+
+if [[ ! -s "$tmp_dat" ]]; then
+  echo "No data produced." >&2
+  exit 1
+fi
+
+# --- aggregate replicates by temperature and compute error bars ---
+# Output file with: Temp  Mean_Dg  Err  N
+out_xyerr="gyration_vs_temp_mean_err.dat"
+awk -v errtype="$ERRTYPE" '
+BEGIN{OFS="\t"}
+# tmp_dat columns: Temp  MeanDg  Label
+{ t=$1; v=$2
+  n[t]++
+  d = v - mean[t]
+  mean[t] += d / n[t]
+  M2[t] += d * (v - mean[t])
+}
+END{
+  for (t in n) {
+    var = (n[t] > 1) ? M2[t] / (n[t]-1) : 0
+    sd  = sqrt(var)
+    sem = (n[t] > 0) ? sd / sqrt(n[t]) : 0
+    err = (errtype=="sd") ? sd : sem
+    printf "%s\t%.6f\t%.6f\t%d\n", t, mean[t], err, n[t]
+  }
+}' "$tmp_dat" | sort -n > "$out_xyerr"
+
+echo "[ok] Wrote: $out_xyerr (columns: Temp[K]  Mean_Dg[Å]  Err[Å]  Nrep)"
+
+# Also keep simple 2-col file (no errors)
+out_xy="gyration_vs_temp.dat"
+awk '{print $1, $2}' "$out_xyerr" > "$out_xy"
+echo "[ok] Wrote: $out_xy (columns: Temp[K]  Mean_Dg[Å])"
+
+# Create a 3-column file for Grace: x y dy (drop N)
+out_xydy="gyration_vs_temp_for_grace.dat"
+awk '{print $1, $2, $3}' "$out_xyerr" > "$out_xydy"
+echo "[ok] Wrote: $out_xydy (columns: Temp[K]  Mean_Dg[Å]  Err[Å])"
+
+
+# --- plot with xmgrace using block input and explicit column mapping (X Y DY) ---
+subtitle_txt="Error bars: ${ERRTYPE^^}"
+
+if $HARDCOPY; then
+  xmgrace \
+    -block "$out_xydy" \
+    -settype xydy \
+    -bxy 1:2:3 \
+    -pexec 'with g0; legend off' \
+    -pexec 'with g0; xaxis label "Temperature (K)"' \
+    -pexec 'with g0; yaxis label "Mean Gyration Diameter (Å)"' \
+    -pexec "with g0; subtitle \"$subtitle_txt\"" \
+    -pexec 's0 errorbar on' \
+    -pexec 's0 symbol 1' \
+    -pexec 's0 symbol size 0.7' \
+    -pexec 's0 line linestyle 1' \
+    -pexec 's0 line linewidth 2' \
+    -pexec 's0 errorbar linewidth 1.0' \
+    -pexec 's0 errorbar riser linewidth 1.0' \
+    -pexec 's0 errorbar size 0.6' \
+    -hardcopy -printfile "$OUTPNG"
+  echo "[ok] Saved plot: $OUTPNG"
+else
+  xmgrace \
+    -block "$out_xydy" \
+    -settype xydy \
+    -bxy 1:2:3 \
+    -pexec 'with g0; legend off' \
+    -pexec 'with g0; xaxis label "Temperature (K)"' \
+    -pexec 'with g0; yaxis label "Mean Gyration Diameter (Å)"' \
+    -pexec "with g0; subtitle \"$subtitle_txt\"" \
+    -pexec 's0 errorbar on' \
+    -pexec 's0 symbol 1' \
+    -pexec 's0 symbol size 0.7' \
+    -pexec 's0 line linestyle 1' \
+    -pexec 's0 line linewidth 2' \
+    -pexec 's0 errorbar linewidth 1.0' \
+    -pexec 's0 errorbar riser linewidth 1.0' \
+    -pexec 's0 errorbar size 0.6' \
+    &
+fi
+
