@@ -1,0 +1,225 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import colors as mcolors
+from pathlib import Path
+
+# ----------------------------------------------------------------------
+# 1. Your xmgr files and titles
+# ----------------------------------------------------------------------
+xmgr_files = [
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/ff19SBData.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/ff14IDPSFFData.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/LigandData.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/NoCCData.xmgr",
+]
+
+subplot_titles = [
+    "ff19SB [1]",
+    "ff14IDPSFF [2]",
+    "Benzothiazole [3]",
+    "Mutant [4]",
+]
+
+# ----------------------------------------------------------------------
+# 2. Base colors per FILE, as hex
+# ----------------------------------------------------------------------
+base_colors = [
+    "#f44336",  # red-ish   (file 0)
+    "#2196f3",  # blue-ish  (file 1)
+    "#4caf50",  # green-ish (file 2)
+    "#ff9800",  # orange-ish(file 3)
+]
+
+def lighten_color(hex_color, factor=0.5):
+    """
+    Lighten a hex color by blending it with white.
+
+    factor=0  -> original color
+    factor=1  -> white
+    """
+    rgb = np.array(mcolors.to_rgb(hex_color))
+    white = np.array([1.0, 1.0, 1.0])
+    new_rgb = (1 - factor) * rgb + factor * white
+    return mcolors.to_hex(new_rgb)
+
+# ----------------------------------------------------------------------
+# 3. Helper: read ALL @type xydy blocks from an .xmgr file
+# ----------------------------------------------------------------------
+def read_xmgr_all_xydy_blocks(filename):
+    datasets = []
+    xs, ys, dys = [], [], []
+    in_block = False
+
+    with open(filename, "r") as f:
+        for line in f:
+            s = line.strip()
+            if not s:
+                continue
+
+            if s.startswith("@type") and "xydy" in s:
+                if in_block and xs:
+                    datasets.append(
+                        (np.array(xs), np.array(ys), np.array(dys))
+                    )
+                xs, ys, dys = [], [], []
+                in_block = True
+                continue
+
+            if s.startswith("&"):
+                if in_block and xs:
+                    datasets.append(
+                        (np.array(xs), np.array(ys), np.array(dys))
+                    )
+                in_block = False
+                xs, ys, dys = [], [], []
+                continue
+
+            if not in_block:
+                continue
+
+            if s[0] in "@#&":
+                continue
+
+            parts = s.split()
+            if len(parts) < 3:
+                continue
+
+            try:
+                x = float(parts[0])
+                y = float(parts[1])
+                dy = float(parts[2])
+            except ValueError:
+                continue
+
+            xs.append(x)
+            ys.append(y)
+            dys.append(dy)
+
+    if in_block and xs:
+        datasets.append((np.array(xs), np.array(ys), np.array(dys)))
+
+    if not datasets:
+        raise RuntimeError(f"No xydy data blocks found in {filename}")
+
+    return datasets
+
+# ----------------------------------------------------------------------
+# 4. Layout
+# ----------------------------------------------------------------------
+fig = plt.figure(figsize=(10, 10))
+gs = fig.add_gridspec(
+    3, 2,
+    height_ratios=[1, 1, 1.1],
+    hspace=0.3,
+    wspace=0.3
+)
+
+axes_individual = [
+    fig.add_subplot(gs[0, 0]),
+    fig.add_subplot(gs[0, 1]),
+    fig.add_subplot(gs[1, 0]),
+    fig.add_subplot(gs[1, 1]),
+]
+
+ax_super0 = fig.add_subplot(gs[2, 0])  # all dataset-0 curves
+ax_super1 = fig.add_subplot(gs[2, 1])  # all dataset-1 curves
+
+# ----------------------------------------------------------------------
+# 5. Plot each file
+# ----------------------------------------------------------------------
+for i, (ax, fname) in enumerate(zip(axes_individual, xmgr_files)):
+    datasets = read_xmgr_all_xydy_blocks(fname)
+
+    title = subplot_titles[i] if i < len(subplot_titles) else Path(fname).name
+    ax.set_title(title)
+
+    base = base_colors[i]
+    lighter = lighten_color(base, factor=0.5)
+
+    # Top panels: first data = lighter, second data = base
+    per_file_colors = [lighter, base]
+
+    for j, (x, y, dy) in enumerate(datasets):
+        color = per_file_colors[j] if j < len(per_file_colors) else base
+
+        # Top: individual subplot WITH error bars, line only
+        line, caplines, barlinecols = ax.errorbar(
+            x, y, yerr=dy,
+            fmt="-",                 # line only, no markers
+            capsize=3,
+            color=color,
+            ecolor="black",
+            elinewidth=1.0,
+        )
+
+        for cap in caplines:
+            cap.set_alpha(0.4)
+        for barlinecol in barlinecols:
+            barlinecol.set_alpha(0.4)
+
+        # Bottom: superposed plots, no error bars
+        if j == 0:
+            ax_super0.plot(
+                x, y,
+                "-",
+                linewidth=1.2,
+                color=base,
+                label=title,
+            )
+        elif j == 1:
+            ax_super1.plot(
+                x, y,
+                "-",
+                linewidth=1.2,
+                color=base,
+                label=title,
+            )
+
+# ----------------------------------------------------------------------
+# 6. Style axes
+# ----------------------------------------------------------------------
+y_ticks = np.arange(0, 51, 10)
+
+for ax in axes_individual + [ax_super0, ax_super1]:
+    ax.tick_params(labelsize=12)
+    ax.set_ylim(0, 51)
+    ax.set_yticks(y_ticks)
+    ax.set_xlim(300, 610)
+
+ax_super0.set_title("α-Helix [5]", fontsize=12)
+ax_super1.set_title("β-Sheets [6]", fontsize=12)
+
+# Smaller legends for both bottom plots
+for ax_super in (ax_super0, ax_super1):
+    handles, labels = ax_super.get_legend_handles_labels()
+    seen = set()
+    unique_handles = []
+    unique_labels = []
+    for h, lab in zip(handles, labels):
+        if lab not in seen:
+            seen.add(lab)
+            unique_handles.append(h)
+            unique_labels.append(lab)
+    ax_super.legend(
+        unique_handles,
+        unique_labels,
+        fontsize=7,
+        labelspacing=0.2,
+        handlelength=1.5,
+    )
+
+# ----------------------------------------------------------------------
+# 7. Shared axis labels + overall title
+# ----------------------------------------------------------------------
+fig.text(0.5, 0.04, "Temperatur [K]", ha="center", va="center", fontsize=16)
+fig.text(0.04, 0.5, "Secondary Structure [%]", ha="center", va="center",
+         rotation="vertical", fontsize=16)
+
+overall_title = "Seondary Struckture in OBP1 melting"
+fig.suptitle(overall_title, fontsize=18)
+
+# Make room for the main title at the top
+plt.tight_layout(rect=(0.08, 0.06, 1.0, 0.95))
+
+plt.savefig("xmgr_multi_dataset_two_combined_bottom.png", dpi=300)
+plt.show()
