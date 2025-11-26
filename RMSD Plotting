@@ -1,0 +1,169 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from pathlib import Path
+
+# ----------------------------------------------------------------------
+# 1. Your xmgr files and titles
+# ----------------------------------------------------------------------
+xmgr_files = [
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripRMSD/Data/ff19SBData.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripRMSD/Data/ff14IDPSFFData.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripRMSD/Data/LigandData.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripRMSD/Data/NoCCData.xmgr",
+]
+
+subplot_titles = [
+    "ff19SB [1]",
+    "ff14IDPSFF [2]",
+    "Benzothiazole [3]",
+    "Mutand [4]",
+]
+
+# ----------------------------------------------------------------------
+# 2. Colors as HEX strings
+#    Change these to whatever hex colors you like (e.g. "#4caf50").
+# ----------------------------------------------------------------------
+colors = [
+    "#f44336",  # red-ish   (file 0)
+    "#2196f3",  # blue-ish  (file 1)
+    "#4caf50",  # green-ish (file 2)
+    "#ff9800",  # orange-ish(file 3)
+]
+
+# ----------------------------------------------------------------------
+# 3. Helper: read the LAST @type xydy block from an .xmgr file
+# ----------------------------------------------------------------------
+def read_xmgr_last_xydy_block(filename):
+    xs, ys, dys = [], [], []
+    in_block = False
+
+    with open(filename, "r") as f:
+        for line in f:
+            s = line.strip()
+            if not s:
+                continue
+
+            if s.startswith("@type") and "xydy" in s:
+                xs, ys, dys = [], [], []
+                in_block = True
+                continue
+
+            if s.startswith("&"):
+                in_block = False
+                continue
+
+            if not in_block:
+                continue
+
+            if s[0] in "@#&":
+                continue
+
+            parts = s.split()
+            if len(parts) < 3:
+                continue
+
+            try:
+                x = float(parts[0])
+                y = float(parts[1])
+                dy = float(parts[2])
+            except ValueError:
+                continue
+
+            xs.append(x)
+            ys.append(y)
+            dys.append(dy)
+
+    if not xs:
+        raise RuntimeError(f"No xydy data block found in {filename}")
+
+    return np.array(xs), np.array(ys), np.array(dys)
+
+# ----------------------------------------------------------------------
+# 4. Layout: 2×2 individual plots on top, 1 wide combined plot below
+# ----------------------------------------------------------------------
+fig = plt.figure(figsize=(10, 10))
+gs = fig.add_gridspec(
+    3, 2,
+    height_ratios=[1, 1, 1.1],
+    hspace=0.3,
+    wspace=0.3
+)
+
+axes_individual = [
+    fig.add_subplot(gs[0, 0]),
+    fig.add_subplot(gs[0, 1]),
+    fig.add_subplot(gs[1, 0]),
+    fig.add_subplot(gs[1, 1]),
+]
+
+ax_super = fig.add_subplot(gs[2, :])
+
+# ----------------------------------------------------------------------
+# 5. Plot each file: top = with error bars, bottom = superposed lines only
+# ----------------------------------------------------------------------
+for i, (ax, fname) in enumerate(zip(axes_individual, xmgr_files)):
+    x, y, dy = read_xmgr_last_xydy_block(fname)
+
+    # Individual subplot WITH error bars; line only (no markers)
+    line, caplines, barlinecols = ax.errorbar(
+        x, y, yerr=dy,
+        fmt="-",               # line only
+        capsize=3,
+        color=colors[i],       # hex line color
+        ecolor="black",        # error bar color
+        elinewidth=1.0,
+    )
+
+    # Make error bars a bit transparent
+    for cap in caplines:
+        cap.set_alpha(0.4)
+    for barcol in barlinecols:
+        barcol.set_alpha(0.4)
+
+    title = subplot_titles[i] if i < len(subplot_titles) else Path(fname).name
+    ax.set_title(title)
+
+    # Same data on the combined axis, but WITHOUT error bars, line only
+    ax_super.plot(
+        x, y,
+        "-",                  # line only
+        linewidth=1.2,
+        color=colors[i],
+        label=title,
+    )
+
+# ----------------------------------------------------------------------
+# 6. Style axes
+# ----------------------------------------------------------------------
+y_ticks = np.arange(0, 23, 5)
+
+for ax in axes_individual + [ax_super]:
+    ax.tick_params(labelsize=12)
+    ax.set_ylim(0, 23)      # up to 105
+    ax.set_yticks(y_ticks)
+    ax.set_xlim(300, 610)    # x-axis 300 to 610
+
+ax_super.set_title("Superposed [5]", fontsize=14)
+ax_super.legend(fontsize=10)
+
+fig.text(0.5, 0.04, "Temperatur [K]", ha="center", va="center", fontsize=16)
+fig.text(0.04, 0.5, "RMSD [Å]", ha="center", va="center",
+         rotation="vertical", fontsize=16)
+
+
+# ----------------------------------------------------------------------
+# 7. Shared axis labels + overall title
+# ----------------------------------------------------------------------
+fig.text(0.5, 0.04, "Temperatur [K]", ha="center", va="center", fontsize=16)
+fig.text(0.04, 0.5, "RMSD [Å]", ha="center", va="center",
+         rotation="vertical", fontsize=16)
+
+overall_title = "RMSD in OBP1 melting"
+fig.suptitle(overall_title, fontsize=18)
+
+# Make room for the main title at the top
+plt.tight_layout(rect=(0.08, 0.06, 1.0, 0.95))
+
+
+plt.savefig("xmgr_4graphs_with_combined_bottom.png", dpi=300)
+plt.show()
