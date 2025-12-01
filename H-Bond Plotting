@@ -3,31 +3,43 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # ----------------------------------------------------------------------
-# 1. Your xmgr files and titles
+# 1. Your xmgr files and titles (4 original + 1 new)
 # ----------------------------------------------------------------------
 xmgr_files = [
     "/nfs/mathusalem/maxence/sfinke/Skripts/NormalTripHBond/Data/autoheatdata.xmgr",
     "/nfs/mathusalem/maxence/sfinke/Skripts/NormalTripHBond/Data/ff14IDPSFFdata.xmgr",
     "/nfs/mathusalem/maxence/sfinke/Skripts/NormalTripHBond/Data/Liganddata.xmgr",
     "/nfs/mathusalem/maxence/sfinke/Skripts/NormalTripHBond/Data/NoCCdata.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/NormalTripHBond/Data/GateMutanddata.xmgr",
 ]
 
+# Titles shown on subplots
 subplot_titles = [
-    "ff19SB [1]",
-    "ff14IDPSFF [2]",
-    "Benzothiazole [3]",
-    "Mutand [4]",
+    "ff19SB [A]",
+    "ff14IDPSFF [B]",
+    "Benzothiazole [C]",
+    "Without SS-Bond [D]",
+    "Gate Mutand [E]",
+]
+
+# Labels used in legend (clean)
+legend_labels = [
+    "ff19SB",
+    "ff14IDPSFF",
+    "Benzothiazole",
+    "Without SS-Bond",
+    "Gate Mutand",
 ]
 
 # ----------------------------------------------------------------------
 # 2. Colors as HEX strings
-#    Change these to whatever hex colors you like (e.g. "#4caf50").
 # ----------------------------------------------------------------------
 colors = [
-    "#f44336",  # red-ish   (file 0)
-    "#2196f3",  # blue-ish  (file 1)
-    "#4caf50",  # green-ish (file 2)
-    "#ff9800",  # orange-ish(file 3)
+    "#f44336",  # ff19SB
+    "#2196f3",  # ff14IDPSFF
+    "#4caf50",  # Benzothiazole
+    "#ff9800",  # Without SS-Bond
+    "#9c27b0",  # New System
 ]
 
 # ----------------------------------------------------------------------
@@ -79,42 +91,53 @@ def read_xmgr_last_xydy_block(filename):
     return np.array(xs), np.array(ys), np.array(dys)
 
 # ----------------------------------------------------------------------
-# 4. Layout: 2×2 individual plots on top, 1 wide combined plot below
+# 4. Layout:
+#    Rows x Cols = 3 x 3
+#    - (0,0) -> legend panel
+#    - (0,1), (0,2), (1,0), (1,1), (1,2) -> 5 plots
+#    - row 2, all columns -> combined plot
 # ----------------------------------------------------------------------
-fig = plt.figure(figsize=(10, 10))
+fig = plt.figure(figsize=(12, 10))
 gs = fig.add_gridspec(
-    3, 2,
+    3, 3,
     height_ratios=[1, 1, 1.1],
-    hspace=0.3,
+    hspace=0.5,
     wspace=0.3
 )
 
-axes_individual = [
-    fig.add_subplot(gs[0, 0]),
-    fig.add_subplot(gs[0, 1]),
-    fig.add_subplot(gs[1, 0]),
-    fig.add_subplot(gs[1, 1]),
-]
+# Legend axis (top-left)
+ax_legend = fig.add_subplot(gs[0, 0])
 
+# Five individual plots in the other 5 slots
+ax_01 = fig.add_subplot(gs[0, 1])
+ax_02 = fig.add_subplot(gs[0, 2])
+ax_10 = fig.add_subplot(gs[1, 0])
+ax_11 = fig.add_subplot(gs[1, 1])
+ax_12 = fig.add_subplot(gs[1, 2])
+
+axes_individual = [ax_01, ax_02, ax_10, ax_11, ax_12]
+
+# Combined superposed axis at bottom
 ax_super = fig.add_subplot(gs[2, :])
 
 # ----------------------------------------------------------------------
-# 5. Plot each file: top = with error bars, bottom = superposed lines only
+# 5. Plot each file: individual plots with error bars, bottom = superposed lines
 # ----------------------------------------------------------------------
+handles_super = []
+
 for i, (ax, fname) in enumerate(zip(axes_individual, xmgr_files)):
     x, y, dy = read_xmgr_last_xydy_block(fname)
 
-    # Individual subplot WITH error bars; line only (no markers)
+    # Individual subplot WITH error bars; line only
     line, caplines, barlinecols = ax.errorbar(
         x, y, yerr=dy,
-        fmt="-",               # line only
+        fmt="-",
         capsize=3,
-        color=colors[i],       # hex line color
-        ecolor="black",        # error bar color
+        color=colors[i],
+        ecolor="black",
         elinewidth=1.0,
     )
 
-    # Make error bars a bit transparent
     for cap in caplines:
         cap.set_alpha(0.4)
     for barcol in barlinecols:
@@ -123,14 +146,14 @@ for i, (ax, fname) in enumerate(zip(axes_individual, xmgr_files)):
     title = subplot_titles[i] if i < len(subplot_titles) else Path(fname).name
     ax.set_title(title)
 
-    # Same data on the combined axis, but WITHOUT error bars, line only
-    ax_super.plot(
+    # Same data on the combined axis, WITHOUT error bars
+    line_super, = ax_super.plot(
         x, y,
-        "-",                  # line only
+        "-",
         linewidth=1.2,
         color=colors[i],
-        label=title,
     )
+    handles_super.append(line_super)
 
 # ----------------------------------------------------------------------
 # 6. Style axes
@@ -139,30 +162,31 @@ y_ticks = np.arange(0, 101, 25)
 
 for ax in axes_individual + [ax_super]:
     ax.tick_params(labelsize=12)
-    ax.set_ylim(0, 105)      # up to 105
+    ax.set_ylim(0, 105)
     ax.set_yticks(y_ticks)
-    ax.set_xlim(300, 610)    # x-axis 300 to 610
+    ax.set_xlim(300, 610)
 
-ax_super.set_title("Superposed [5]", fontsize=14)
-ax_super.legend(fontsize=10)
+ax_super.set_title("Superposed [F]", fontsize=14)
 
+# Legend in its own panel (top-left)
+ax_legend.axis("off")
+ax_legend.legend(
+    handles_super,
+    legend_labels,
+    loc="center",
+    fontsize=11,
+    frameon=False,
+)
+
+# Shared axis labels
 fig.text(0.5, 0.04, "Temperatur [K]", ha="center", va="center", fontsize=16)
 fig.text(0.04, 0.5, "H-Bonds [%]", ha="center", va="center",
          rotation="vertical", fontsize=16)
 
 # ----------------------------------------------------------------------
-# 7. Shared axis labels + overall title
+# 7. Layout + save
 # ----------------------------------------------------------------------
-fig.text(0.5, 0.04, "Temperatur [K]", ha="center", va="center", fontsize=16)
-fig.text(0.04, 0.5, "H-Bonds [%]", ha="center", va="center",
-         rotation="vertical", fontsize=16)
+plt.tight_layout(rect=(0.08, 0.06, 1.0, 0.96))
 
-overall_title = "H-Bonds in OBP1 melting"
-fig.suptitle(overall_title, fontsize=18)
-
-# Make room for the main title at the top
-plt.tight_layout(rect=(0.08, 0.06, 1.0, 0.95))
-
-
-plt.savefig("xmgr_4graphs_with_combined_bottom.png", dpi=300)
+plt.savefig("xmgr_5graphs_legend_top_left_and_combined_bottom.png", dpi=300)
 plt.show()
