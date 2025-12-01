@@ -1,0 +1,144 @@
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib import colors as mcolors
+from pathlib import Path
+
+# ----------------------------------------------------------------------
+# 1. Your xmgr files and titles
+# ----------------------------------------------------------------------
+xmgr_files = [
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/ff19SBData.xmgr",
+    #"/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/ff14IDPSFFData.xmgr",
+    #"/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/LigandData.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/NoCCData.xmgr",
+]
+
+subplot_titles = [
+    "ff19SB",
+    #"ff14IDPSFF",
+    #"Benzothiazole",
+    "Without SS-Bond",
+]
+
+# Base colors per FILE, as hex
+base_colors = [
+    "#f44336",  # file 0
+   # "#2196f3",  # file 1
+   # "#4caf50",  # file 2
+    "#ff9800",  # file 3
+]
+
+# ----------------------------------------------------------------------
+# Helper: read ALL @type xydy blocks from an .xmgr file
+# ----------------------------------------------------------------------
+def read_xmgr_all_xydy_blocks(filename):
+    datasets = []
+    xs, ys, dys = [], [], []
+    in_block = False
+
+    with open(filename, "r") as f:
+        for line in f:
+            s = line.strip()
+            if not s:
+                continue
+
+            if s.startswith("@type") and "xydy" in s:
+                if in_block and xs:
+                    datasets.append(
+                        (np.array(xs), np.array(ys), np.array(dys))
+                    )
+                xs, ys, dys = [], [], []
+                in_block = True
+                continue
+
+            if s.startswith("&"):
+                if in_block and xs:
+                    datasets.append(
+                        (np.array(xs), np.array(ys), np.array(dys))
+                    )
+                in_block = False
+                xs, ys, dys = [], [], []
+                continue
+
+            if not in_block:
+                continue
+
+            if s[0] in "@#&":
+                continue
+
+            parts = s.split()
+            if len(parts) < 3:
+                continue
+
+            try:
+                x = float(parts[0])
+                y = float(parts[1])
+                dy = float(parts[2])
+            except ValueError:
+                continue
+
+            xs.append(x)
+            ys.append(y)
+            dys.append(dy)
+
+    if in_block and xs:
+        datasets.append((np.array(xs), np.array(ys), np.array(dys)))
+
+    if not datasets:
+        raise RuntimeError(f"No xydy data blocks found in {filename}")
+
+    return datasets
+
+# ----------------------------------------------------------------------
+# Plot ONLY the "bottom right" superposed β-Sheets panel
+# ----------------------------------------------------------------------
+fig, ax = plt.subplots(figsize=(5, 4))
+
+for i, fname in enumerate(xmgr_files):
+    datasets = read_xmgr_all_xydy_blocks(fname)
+    base = base_colors[i]
+    title = subplot_titles[i]
+
+    # In your original script, the bottom-right panel uses dataset index 1
+    # (the second xydy block) from each file.
+    if len(datasets) > 1:
+        x, y, dy = datasets[1]
+        ax.plot(
+            x, y,
+            "-",
+            linewidth=1.2,
+            color=base,
+            label=title,
+        )
+
+# Style it like your original bottom-right panel
+y_ticks = np.arange(0, 51, 10)
+ax.set_ylim(0, 51)
+ax.set_yticks(y_ticks)
+ax.set_xlim(300, 610)
+
+ax.set_xlabel("Temperatur [K]", fontsize=11)
+ax.set_ylabel("β-Sheets [%]", fontsize=11)
+
+# Legend with unique labels
+handles, labels = ax.get_legend_handles_labels()
+seen = set()
+unique_handles = []
+unique_labels = []
+for h, lab in zip(handles, labels):
+    if lab not in seen:
+        seen.add(lab)
+        unique_handles.append(h)
+        unique_labels.append(lab)
+
+ax.legend(
+    unique_handles,
+    unique_labels,
+    fontsize=8,
+    labelspacing=0.2,
+    handlelength=1.5,
+)
+
+plt.tight_layout()
+plt.savefig("beta_sheets_only.png", dpi=300)
+plt.show()
