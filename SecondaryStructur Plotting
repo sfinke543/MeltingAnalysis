@@ -4,38 +4,49 @@ from matplotlib import colors as mcolors
 from pathlib import Path
 
 # ----------------------------------------------------------------------
-# 1. Your xmgr files and titles
+# 1. Your xmgr files and titles  (5 systems)
 # ----------------------------------------------------------------------
 xmgr_files = [
     "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/ff19SBData.xmgr",
     "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/ff14IDPSFFData.xmgr",
     "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/LigandData.xmgr",
     "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/NoCCData.xmgr",
+    "/nfs/mathusalem/maxence/sfinke/Skripts/TripSS/Data/GateMutanddata.xmgr",
 ]
 
 subplot_titles = [
-    "ff19SB [1]",
-    "ff14IDPSFF [2]",
-    "Benzothiazole [3]",
-    "Mutant [4]",
+    "ff19SB [A]",
+    "ff14IDPSFF [B]",
+    "Benzothiazole [C]",
+    "Without SS-Bond [D]",
+    "Gate Mutand [E]",
+]
+
+legend_labels = [
+    "ff19SB",
+    "ff14IDPSFF",
+    "Benzothiazole",
+    "Without SS-Bond",
+    "Gate Mutand",
 ]
 
 # ----------------------------------------------------------------------
-# 2. Base colors per FILE, as hex
+# 2. Base colors per FILE, as hex (5 colors)
 # ----------------------------------------------------------------------
 base_colors = [
-    "#f44336",  # red-ish   (file 0)
-    "#2196f3",  # blue-ish  (file 1)
-    "#4caf50",  # green-ish (file 2)
-    "#ff9800",  # orange-ish(file 3)
+    "#f44336",  # ff19SB
+    "#2196f3",  # ff14IDPSFF
+    "#4caf50",  # Benzothiazole
+    "#ff9800",  # Without SS-Bond
+    "#9c27b0",  # Gate Mutand
 ]
 
 def lighten_color(hex_color, factor=0.5):
     """
     Lighten a hex color by blending it with white.
 
-    factor=0  -> original color
-    factor=1  -> white
+    factor = 0 -> original color
+    factor = 1 -> white
     """
     rgb = np.array(mcolors.to_rgb(hex_color))
     white = np.array([1.0, 1.0, 1.0])
@@ -104,25 +115,34 @@ def read_xmgr_all_xydy_blocks(filename):
     return datasets
 
 # ----------------------------------------------------------------------
-# 4. Layout
+# 4. Layout: 3 x 3
+#    - (0,0) legend panel
+#    - (0,1), (0,2), (1,0), (1,1), (1,2) = 5 individual plots
+#    - bottom row: β-Sheets combined (cols 0–1), α-Helix combined (col 2)
 # ----------------------------------------------------------------------
-fig = plt.figure(figsize=(10, 10))
+fig = plt.figure(figsize=(12, 10))
 gs = fig.add_gridspec(
-    3, 2,
+    3, 3,
     height_ratios=[1, 1, 1.1],
-    hspace=0.3,
+    hspace=0.5,
     wspace=0.3
 )
 
-axes_individual = [
-    fig.add_subplot(gs[0, 0]),
-    fig.add_subplot(gs[0, 1]),
-    fig.add_subplot(gs[1, 0]),
-    fig.add_subplot(gs[1, 1]),
-]
+# Legend axis (top-left)
+ax_legend = fig.add_subplot(gs[0, 0])
 
-ax_super0 = fig.add_subplot(gs[2, 0])  # all dataset-0 curves
-ax_super1 = fig.add_subplot(gs[2, 1])  # all dataset-1 curves
+# Five individual plots in the other 5 slots
+ax_01 = fig.add_subplot(gs[0, 1])
+ax_02 = fig.add_subplot(gs[0, 2])
+ax_10 = fig.add_subplot(gs[1, 0])
+ax_11 = fig.add_subplot(gs[1, 1])
+ax_12 = fig.add_subplot(gs[1, 2])
+
+axes_individual = [ax_01, ax_02, ax_10, ax_11, ax_12]
+
+# Combined axes at bottom (SWITCHED: beta left, alpha right)
+ax_super_beta  = fig.add_subplot(gs[2, 0:2])  # β-sheets (dataset 1)
+ax_super_alpha = fig.add_subplot(gs[2, 2])    # α-helix (dataset 0)
 
 # ----------------------------------------------------------------------
 # 5. Plot each file
@@ -136,7 +156,7 @@ for i, (ax, fname) in enumerate(zip(axes_individual, xmgr_files)):
     base = base_colors[i]
     lighter = lighten_color(base, factor=0.5)
 
-    # Top panels: first data = lighter, second data = base
+    # First dataset = lighter (e.g. α), second dataset = base (e.g. β)
     per_file_colors = [lighter, base]
 
     for j, (x, y, dy) in enumerate(datasets):
@@ -159,20 +179,22 @@ for i, (ax, fname) in enumerate(zip(axes_individual, xmgr_files)):
 
         # Bottom: superposed plots, no error bars
         if j == 0:
-            ax_super0.plot(
+            # α-helix curves (now RIGHT panel)
+            ax_super_alpha.plot(
                 x, y,
                 "-",
                 linewidth=1.2,
                 color=base,
-                label=title,
+                label=legend_labels[i],
             )
         elif j == 1:
-            ax_super1.plot(
+            # β-sheets curves (now LEFT panel)
+            ax_super_beta.plot(
                 x, y,
                 "-",
                 linewidth=1.2,
                 color=base,
-                label=title,
+                label=legend_labels[i],
             )
 
 # ----------------------------------------------------------------------
@@ -180,17 +202,17 @@ for i, (ax, fname) in enumerate(zip(axes_individual, xmgr_files)):
 # ----------------------------------------------------------------------
 y_ticks = np.arange(0, 51, 10)
 
-for ax in axes_individual + [ax_super0, ax_super1]:
+for ax in axes_individual + [ax_super_alpha, ax_super_beta]:
     ax.tick_params(labelsize=12)
     ax.set_ylim(0, 51)
     ax.set_yticks(y_ticks)
     ax.set_xlim(300, 610)
 
-ax_super0.set_title("α-Helix [5]", fontsize=12)
-ax_super1.set_title("β-Sheets [6]", fontsize=12)
+ax_super_beta.set_title("β-Sheets [F]", fontsize=12)
+ax_super_alpha.set_title("α-Helix [G]", fontsize=12)
 
-# Smaller legends for both bottom plots
-for ax_super in (ax_super0, ax_super1):
+# Legends for bottom plots (deduplicated)
+for ax_super in (ax_super_beta, ax_super_alpha):
     handles, labels = ax_super.get_legend_handles_labels()
     seen = set()
     unique_handles = []
@@ -208,18 +230,26 @@ for ax_super in (ax_super0, ax_super1):
         handlelength=1.5,
     )
 
+# Legend panel (top-left) – use labels from beta panel (same set as alpha)
+ax_legend.axis("off")
+handles_beta, labels_beta = ax_super_beta.get_legend_handles_labels()
+ax_legend.legend(
+    handles_beta,
+    labels_beta,
+    loc="center",
+    fontsize=11,
+    frameon=False,
+)
+
 # ----------------------------------------------------------------------
-# 7. Shared axis labels + overall title
+# 7. Shared axis labels
 # ----------------------------------------------------------------------
 fig.text(0.5, 0.04, "Temperatur [K]", ha="center", va="center", fontsize=16)
 fig.text(0.04, 0.5, "Secondary Structure [%]", ha="center", va="center",
          rotation="vertical", fontsize=16)
 
-overall_title = "Seondary Struckture in OBP1 melting"
-fig.suptitle(overall_title, fontsize=18)
+# Layout + save
+plt.tight_layout(rect=(0.08, 0.06, 1.0, 0.96))
 
-# Make room for the main title at the top
-plt.tight_layout(rect=(0.08, 0.06, 1.0, 0.95))
-
-plt.savefig("xmgr_multi_dataset_two_combined_bottom.png", dpi=300)
+plt.savefig("xmgr_SS_5systems_beta_left_alpha_right_legend_topleft.png", dpi=300)
 plt.show()
